@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../app.dart';
 import '../providers/node_provider.dart';
 import '../services/preferences_service.dart';
@@ -48,12 +50,83 @@ class _NodeScreenState extends State<NodeScreen> {
     super.dispose();
   }
 
+  Future<void> _scanQrCode() async {
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Scan Node QR')),
+          body: MobileScanner(
+            onDetect: (capture) {
+              final barcodes = capture.barcodes;
+              final first = barcodes.isNotEmpty ? barcodes.first : null;
+              if (first != null && first.rawValue != null && first.rawValue!.isNotEmpty) {
+                Navigator.pop(context, first.rawValue);
+              }
+            },
+          ),
+        ),
+      ),
+    );
+    if (result != null) {
+      // Parse URL like ws://host:port?token=xxx
+      try {
+        final uri = Uri.parse(result);
+        setState(() {
+          _isLocal = false;
+          _hostController.text = uri.host;
+          _portController.text = uri.port.toString();
+          _tokenController.text = uri.queryParameters['token'] ?? uri.queryParameters['access_token'] ?? '';
+        });
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid QR code')),
+        );
+      }
+    }
+  }
+
+  void _showQrCode() {
+    final host = _hostController.text.trim().isEmpty ? '127.0.0.1' : _hostController.text.trim();
+    final port = _portController.text.trim().isEmpty ? '18789' : _portController.text.trim();
+    final token = _tokenController.text.trim();
+    final url = 'ws://$host:$port?token=$token';
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Node QR Code'),
+        content: SizedBox(
+          width: 250,
+          height: 250,
+          child: QrImageView(
+            data: url,
+            version: QrVersions.auto,
+            backgroundColor: Colors.white,
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Node Configuration')),
+      appBar: AppBar(
+        title: const Text('Node Configuration'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.qr_code),
+            tooltip: 'Show QR Code',
+            onPressed: _showQrCode,
+          ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Consumer<NodeProvider>(
@@ -134,6 +207,12 @@ class _NodeScreenState extends State<NodeScreen> {
                                 },
                                 icon: const Icon(Icons.link),
                                 label: const Text('Connect'),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                onPressed: _scanQrCode,
+                                icon: const Icon(Icons.qr_code_scanner),
+                                label: const Text('Scan QR Code'),
                               ),
                             ],
                           ],

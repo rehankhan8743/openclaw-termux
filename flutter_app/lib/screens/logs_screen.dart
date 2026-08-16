@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../app.dart';
 import '../providers/gateway_provider.dart';
 import '../services/screenshot_service.dart';
@@ -50,6 +53,11 @@ class _LogsScreenState extends State<LogsScreen> {
             icon: const Icon(Icons.copy),
             tooltip: 'Copy all logs',
             onPressed: () => _copyLogs(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.share),
+            tooltip: 'Export logs',
+            onPressed: _exportLogs,
           ),
         ],
       ),
@@ -167,5 +175,15 @@ class _LogsScreenState extends State<LogsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Logs copied to clipboard')),
     );
+  }
+
+  Future<void> _exportLogs() async {
+    final provider = context.read<GatewayProvider>();
+    final logs = provider.state.logs.join('\n');
+    final timestamp = DateTime.now().toIso8601String();
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/openclaw_logs_$timestamp.txt');
+    await file.writeAsString(logs);
+    await Share.shareXFiles([XFile(file.path)], text: 'OpenClaw Gateway Logs');
   }
 }

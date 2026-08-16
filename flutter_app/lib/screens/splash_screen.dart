@@ -3,7 +3,9 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/services.dart';
 import '../constants.dart';
+import '../services/biometric_service.dart';
 import '../services/native_bridge.dart';
 import '../services/preferences_service.dart';
 import 'setup_wizard_screen.dart';
@@ -172,6 +174,17 @@ class _SplashScreenState extends State<SplashScreen>
 
       if (setupComplete) {
         prefs.setupComplete = true;
+
+        // Biometric gate
+        final bioEnabled = await BiometricService.isEnabled;
+        if (bioEnabled) {
+          final auth = await BiometricService.authenticate(reason: 'Unlock OpenClaw');
+          if (!auth) {
+            SystemNavigator.pop();
+            return;
+          }
+        }
+
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const DashboardScreen()),
         );

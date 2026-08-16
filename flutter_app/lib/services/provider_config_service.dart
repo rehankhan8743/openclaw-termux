@@ -178,4 +178,10 @@ fs.writeFileSync(p, JSON.stringify(c, null, 2));
       timeout: 15,
     );
   }
+
+  /// Write the entire provider configuration (for backup restore).
+  static Future<void> writeConfig(Map<String, dynamic> config) async {
+    const encoder = JsonEncoder.withIndent('  ');
+    await NativeBridge.writeRootfsFile(_configPath, encoder.convert(config));
+  }
 }

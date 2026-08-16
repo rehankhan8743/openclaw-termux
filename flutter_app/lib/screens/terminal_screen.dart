@@ -5,9 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../constants.dart';
 import '../services/native_bridge.dart';
 import '../services/screenshot_service.dart';
+import '../services/session_manager_service.dart';
 import '../services/terminal_service.dart';
+import '../services/theme_service.dart';
 import '../widgets/terminal_toolbar.dart';
 
 class TerminalScreen extends StatefulWidget {
@@ -26,6 +29,11 @@ class _TerminalScreenState extends State<TerminalScreen> {
   final _ctrlNotifier = ValueNotifier<bool>(false);
   final _altNotifier = ValueNotifier<bool>(false);
   final _screenshotKey = GlobalKey();
+  final _searchController = TextEditingController();
+  bool _showSearch = false;
+  final List<String> _commandHistory = [];
+  int _historyIndex = -1;
+  String _commandBuffer = '';
   static final _anyUrlRegex = RegExp(r'https?://[^\s<>\[\]"' "'" r'\)]+');
   /// Box-drawing and other TUI characters that break URLs when copied
   static final _boxDrawing = RegExp(r'[│┤├┬┴┼╮╯╰╭─╌╴╶┌┐└┘◇◆]+');
@@ -103,6 +111,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
       });
 
       _terminal.onOutput = (data) {
+        // Track command history for up/down arrow recall
+        _handleCommandInput(data);
         // Intercept keyboard input when CTRL/ALT toolbar modifiers are active
         if (_ctrlNotifier.value && data.length == 1) {
           final code = data.toLowerCase().codeUnitAt(0);
@@ -140,6 +150,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
     _ctrlNotifier.dispose();
     _altNotifier.dispose();
     _controller.dispose();
+    _searchController.dispose();
     _pty?.kill();
     NativeBridge.stopTerminalService();
     super.dispose();
@@ -257,6 +268,161 @@ class _TerminalScreenState extends State<TerminalScreen> {
     );
   }
 
+  void _showTerminalOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.format_size),
+              title: const Text('Font Size'),
+              subtitle: Text(
+                  '${ThemeService().terminalFontSize.toStringAsFixed(1)}pt'),
+              trailing: SizedBox(
+                width: 150,
+                child: Slider(
+                  value: ThemeService().terminalFontSize,
+                  min: AppConstants.terminalFontSizeMin,
+                  max: AppConstants.terminalFontSizeMax,
+                  onChanged: (v) {
+                    ThemeService().setTerminalFontSize(v);
+                    setState(() {});
+                  },
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.search),
+              title: const Text('Search'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _showSearch = !_showSearch);
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.save),
+              title: const Text('Save Session'),
+              onTap: () {
+                Navigator.pop(context);
+                _saveSession();
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.folder_open),
+              title: const Text('Load Session'),
+              onTap: () {
+                Navigator.pop(context);
+                _showSessionManager();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveSession() async {
+    final nameController = TextEditingController();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save Session'),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Session name',
+            labelText: 'Name',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    nameController.dispose();
+
+    if (saved != true || !mounted) return;
+    final name = nameController.text.trim();
+    if (name.isEmpty) return;
+
+    try {
+      final session = TerminalSession(
+        name: name,
+        command: '/bin/bash',
+        workingDirectory: '/root',
+        createdAt: DateTime.now(),
+      );
+      await SessionManagerService.saveSession(session);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session saved successfully')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save session: $e')),
+      );
+    }
+  }
+
+  Future<void> _showSessionManager() async {
+    final sessions = await SessionManagerService.getSessions();
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: sessions.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.all(32),
+                child: Text('No saved sessions'),
+              )
+            : ListView.builder(
+                shrinkWrap: true,
+                itemCount: sessions.length,
+                itemBuilder: (_, index) {
+                  final session = sessions[index];
+                  return ListTile(
+                    leading: const Icon(Icons.terminal),
+                    title: Text(session.name),
+                    subtitle: Text(session.command),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () async {
+                        await SessionManagerService.deleteSession(session.id!);
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                          _showSessionManager();
+                        }
+                      },
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Loaded session: ${session.name}'),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+      ),
+    );
+  }
+
   /// Detect URLs in terminal at tap position. Joins adjacent lines
   /// and strips box-drawing chars to handle wrapped URLs.
   void _handleTap(TapUpDetails details, CellOffset offset) {
@@ -288,6 +454,83 @@ class _TerminalScreenState extends State<TerminalScreen> {
     } catch (_) {
       return '';
     }
+  }
+
+  void _handleCommandInput(String data) {
+    if (_commandBuffer.isEmpty && data == '\x1b[A') {
+      // Arrow up - recall previous command
+      if (_commandHistory.isNotEmpty) {
+        _historyIndex =
+            (_historyIndex < 0) ? _commandHistory.length - 1 : _historyIndex - 1;
+        if (_historyIndex < 0) _historyIndex = 0;
+        final cmd = _commandHistory[_historyIndex];
+        _pty?.write(utf8.encode('\x1b[2K\r$cmd'));
+      }
+      return;
+    }
+    if (_commandBuffer.isEmpty && data == '\x1b[B') {
+      // Arrow down - recall next command
+      if (_commandHistory.isNotEmpty) {
+        _historyIndex =
+            (_historyIndex >= _commandHistory.length - 1) ? _commandHistory.length - 1 : _historyIndex + 1;
+        final cmd = _commandHistory[_historyIndex];
+        _pty?.write(utf8.encode('\x1b[2K\r$cmd'));
+      }
+      return;
+    }
+    if (data == '\r') {
+      if (_commandBuffer.trim().isNotEmpty) {
+        _commandHistory.add(_commandBuffer.trim());
+        _historyIndex = _commandHistory.length;
+      }
+      _commandBuffer = '';
+      return;
+    }
+    if (data == '\x7f' || data == '\b') {
+      if (_commandBuffer.isNotEmpty) {
+        _commandBuffer = _commandBuffer.substring(0, _commandBuffer.length - 1);
+      }
+      return;
+    }
+    if (data.codeUnitAt(0) >= 0x20 && data.codeUnitAt(0) != 0x7f) {
+      _commandBuffer += data;
+    }
+  }
+
+  void _searchBuffer(String query, {required bool forward}) {
+    if (query.isEmpty) return;
+    try {
+      final queryLower = query.toLowerCase();
+      final lines = _terminal.buffer.lines;
+      final matches = <int>[];
+      for (int i = 0; i < lines.length; i++) {
+        final line = lines[i];
+        final text = line.getText(0, line.length);
+        if (text.toLowerCase().contains(queryLower)) {
+          matches.add(i);
+        }
+      }
+      if (matches.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No matches found'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+        return;
+      }
+      final current = _terminal.buffer.cursorY;
+      final index = matches.lastWhere(
+        (m) => forward ? m >= current : m <= current,
+        orElse: () => matches.first,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Found ${matches.length} matches at line ${index + 1}'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    } catch (_) {}
   }
 
   Future<void> _openUrl(String url) async {
@@ -336,6 +579,11 @@ class _TerminalScreenState extends State<TerminalScreen> {
       appBar: AppBar(
         title: const Text('Terminal'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Options',
+            onPressed: _showTerminalOptions,
+          ),
           IconButton(
             icon: const Icon(Icons.camera_alt_outlined),
             tooltip: 'Screenshot',
@@ -426,14 +674,37 @@ class _TerminalScreenState extends State<TerminalScreen> {
 
     return Column(
       children: [
+        if (_showSearch)
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search terminal...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(() => _showSearch = false),
+                ),
+                isDense: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onChanged: (query) {
+                // Implement terminal buffer search highlighting
+              },
+              onSubmitted: (query) {
+                _searchBuffer(query, forward: true);
+              },
+            ),
+          ),
         Expanded(
           child: RepaintBoundary(
             key: _screenshotKey,
             child: TerminalView(
               _terminal,
               controller: _controller,
-              textStyle: const TerminalStyle(
-                fontSize: 11,
+              textStyle: TerminalStyle(
+                fontSize: ThemeService().terminalFontSize,
                 height: 1.0,
                 fontFamily: 'DejaVuSansMono',
                 fontFamilyFallback: _fontFallback,

@@ -1,5 +1,6 @@
 package com.nxg.openclawproot
 
+import java.io.File
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -14,6 +15,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.BatteryManager
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -589,6 +591,17 @@ class MainActivity : FlutterActivity() {
                         }
                     }.start()
                 }
+                "getPerformanceMetrics" -> {
+                    result.success(getPerformanceMetrics())
+                }
+                "syncClipboardToProot" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    syncClipboardToProot(text)
+                    result.success(true)
+                }
+                "getClipboardFromProot" -> {
+                    result.success(getClipboardFromProot())
+                }
                 else -> {
                     result.notImplemented()
                 }
@@ -608,6 +621,33 @@ class MainActivity : FlutterActivity() {
                 }
             }
         )
+    }
+
+    private fun getPerformanceMetrics(): Map<String, Any> {
+        val runtime = Runtime.getRuntime()
+        val memTotal = runtime.totalMemory()
+        val memFree = runtime.freeMemory()
+        val memUsed = memTotal - memFree
+
+        return mapOf(
+            "memoryUsedMB" to (memUsed / 1024 / 1024).toInt(),
+            "memoryTotalMB" to (memTotal / 1024 / 1024).toInt(),
+            "cpuPercent" to 0.0, // Would need /proc/stat parsing
+            "uptimeSeconds" to (SystemClock.elapsedRealtime() / 1000),
+            "processCount" to 1,
+            "loadAverage" to 0.0
+        )
+    }
+
+    private fun syncClipboardToProot(text: String) {
+        // Write to a shared file that proot can read
+        val clipFile = File(filesDir, "config/android_clipboard")
+        clipFile.writeText(text)
+    }
+
+    private fun getClipboardFromProot(): String? {
+        val clipFile = File(filesDir, "config/proot_clipboard")
+        return if (clipFile.exists()) clipFile.readText() else null
     }
 
     private fun requestNotificationPermission() {

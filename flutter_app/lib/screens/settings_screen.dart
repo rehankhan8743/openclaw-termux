@@ -7,10 +7,17 @@ import 'package:url_launcher/url_launcher.dart';
 import '../app.dart';
 import '../constants.dart';
 import '../providers/node_provider.dart';
+import '../services/biometric_service.dart';
+import '../services/clipboard_sync_service.dart';
 import '../services/native_bridge.dart';
+import '../services/notification_service.dart';
 import '../services/preferences_service.dart';
+import '../services/theme_service.dart';
 import '../services/update_service.dart';
+import 'backup_restore_screen.dart';
+import 'diagnostics_screen.dart';
 import 'node_screen.dart';
+import 'performance_screen.dart';
 import 'setup_wizard_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -35,6 +42,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _storageGranted = false;
   bool _checkingUpdate = false;
 
+  bool _biometricEnabled = false;
+  bool _clipboardSyncEnabled = false;
+  bool _biometricAvailable = false;
+
   @override
   void initState() {
     super.initState();
@@ -46,6 +57,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _autoStart = _prefs.autoStartGateway;
     _nodeEnabled = _prefs.nodeEnabled;
 
+    _biometricEnabled = await BiometricService.isEnabled;
+    _clipboardSyncEnabled = await ClipboardSyncService.isEnabled;
+    _biometricAvailable = await BiometricService.isAvailable();
+
+    await NotificationService.init();
+
     try {
       final arch = await NativeBridge.getArch();
       final prootPath = await NativeBridge.getProotPath();
@@ -54,7 +71,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       final storageGranted = await NativeBridge.hasStoragePermission();
 
-      // Check optional package statuses
       final filesDir = await NativeBridge.getFilesDir();
       final rootfs = '$filesDir/rootfs/ubuntu';
       final goInstalled = File('$rootfs/usr/bin/go').existsSync();
@@ -90,6 +106,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
+                _sectionHeader(theme, 'APPEARANCE'),
+                _buildThemeSection(theme),
+                const Divider(),
+                _sectionHeader(theme, 'TERMINAL'),
+                _buildTerminalSection(theme),
+                const Divider(),
+                _sectionHeader(theme, 'SECURITY'),
+                _buildSecuritySection(theme),
+                const Divider(),
                 _sectionHeader(theme, 'GENERAL'),
                 SwitchListTile(
                   title: const Text('Auto-start gateway'),
@@ -111,7 +136,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       : const Icon(Icons.check_circle, color: AppColors.statusGreen),
                   onTap: () async {
                     await NativeBridge.requestBatteryOptimization();
-                    // Refresh status after returning from settings
                     final optimized = await NativeBridge.isBatteryOptimized();
                     setState(() => _batteryOptimized = optimized);
                   },
@@ -127,7 +151,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       : const Icon(Icons.check_circle, color: AppColors.statusGreen),
                   onTap: () async {
                     await NativeBridge.requestStoragePermission();
-                    // Refresh after returning from permission screen
                     final granted = await NativeBridge.hasStoragePermission();
                     setState(() => _storageGranted = granted);
                   },
@@ -156,6 +179,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const NodeScreen()),
+                  ),
+                ),
+                const Divider(),
+                _sectionHeader(theme, 'NOTIFICATIONS'),
+                _buildNotificationSection(theme),
+                const Divider(),
+                _sectionHeader(theme, 'TOOLS'),
+                ListTile(
+                  title: const Text('Performance Monitor'),
+                  subtitle: const Text('Real-time CPU, memory, disk, and load metrics'),
+                  leading: const Icon(Icons.speed),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const PerformanceScreen()),
+                  ),
+                ),
+                ListTile(
+                  title: const Text('Diagnostics'),
+                  subtitle: const Text('Network, PRoot, bootstrap, and gateway health checks'),
+                  leading: const Icon(Icons.network_check),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const DiagnosticsScreen()),
+                  ),
+                ),
+                ListTile(
+                  title: const Text('Terminal Sessions'),
+                  subtitle: const Text('Save, manage, and launch terminal sessions'),
+                  leading: const Icon(Icons.terminal),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Terminal Sessions screen coming soon')),
+                    );
+                  },
+                ),
+                ListTile(
+                  title: const Text('Backup & Restore'),
+                  subtitle: const Text('Export/import all settings and provider configs'),
+                  leading: const Icon(Icons.backup),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const BackupRestoreScreen()),
                   ),
                 ),
                 const Divider(),
@@ -215,14 +281,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const Divider(),
                 _sectionHeader(theme, 'MAINTENANCE'),
                 ListTile(
-                  title: const Text('Export Snapshot'),
+                  title: const Text('Export Snapshot (Legacy)'),
                   subtitle: const Text('Backup config to Downloads'),
                   leading: const Icon(Icons.upload_file),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _exportSnapshot,
                 ),
                 ListTile(
-                  title: const Text('Import Snapshot'),
+                  title: const Text('Import Snapshot (Legacy)'),
                   subtitle: const Text('Restore config from backup'),
                   leading: const Icon(Icons.download),
                   trailing: const Icon(Icons.chevron_right),
@@ -336,6 +402,239 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _buildThemeSection(ThemeData theme) {
+    return Consumer<ThemeService>(
+      builder: (context, themeService, _) {
+        return Column(
+          children: [
+            ListTile(
+              title: const Text('Theme Mode'),
+              subtitle: Text(_themeModeLabel(themeService.themeMode)),
+              leading: const Icon(Icons.palette),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _showThemeModeDialog(themeService),
+            ),
+            ListTile(
+              title: const Text('Accent Color'),
+              subtitle: Text(AppConstants.accentColorNames[
+                  AppConstants.accentColors.indexOf(themeService.accentColor)]),
+              leading: const Icon(Icons.color_lens),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _showAccentColorDialog(themeService),
+            ),
+            SwitchListTile(
+              title: const Text('AMOLED Black'),
+              subtitle: const Text('Use pure black background (saves battery on OLED)'),
+              value: themeService.useAmoledBlack,
+              onChanged: (value) => themeService.setUseAmoledBlack(value),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTerminalSection(ThemeData theme) {
+    return Consumer<ThemeService>(
+      builder: (context, themeService, _) {
+        return Column(
+          children: [
+            ListTile(
+              title: const Text('Font Size'),
+              subtitle: Text('${themeService.terminalFontSize.toStringAsFixed(1)} pt'),
+              leading: const Icon(Icons.text_fields),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _showFontSizeDialog(themeService),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSecuritySection(ThemeData theme) {
+    if (!_biometricAvailable) {
+      return Column(
+        children: [
+          const ListTile(
+            leading: Icon(Icons.fingerprint, color: AppColors.statusGrey),
+            title: Text('Biometric Authentication'),
+            subtitle: Text('Not available on this device'),
+          ),
+          SwitchListTile(
+            title: const Text('Clipboard Sync'),
+            subtitle: const Text('Sync clipboard between Android and PRoot'),
+            value: _clipboardSyncEnabled,
+            onChanged: (value) async {
+              await ClipboardSyncService.setEnabled(value);
+              setState(() => _clipboardSyncEnabled = value);
+            },
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        SwitchListTile(
+          title: const Text('Biometric Authentication'),
+          subtitle: const Text('Require fingerprint/face to access sensitive settings'),
+          value: _biometricEnabled,
+          onChanged: (value) async {
+            if (value) {
+              final auth = await BiometricService.authenticate(reason: 'Enable biometric lock');
+              if (!auth) return;
+            }
+            await BiometricService.setEnabled(value);
+            setState(() => _biometricEnabled = value);
+          },
+        ),
+        SwitchListTile(
+          title: const Text('Clipboard Sync'),
+          subtitle: const Text('Sync clipboard between Android and PRoot'),
+          value: _clipboardSyncEnabled,
+          onChanged: (value) async {
+            await ClipboardSyncService.setEnabled(value);
+            setState(() => _clipboardSyncEnabled = value);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNotificationSection(ThemeData theme) {
+    return Column(
+      children: [
+        SwitchListTile(
+          title: const Text('Gateway Status'),
+          subtitle: const Text('Show ongoing notification when gateway is running'),
+          value: NotificationService.gatewayStatusNotifications,
+          onChanged: (value) => NotificationService.setGatewayStatusNotifications(value),
+        ),
+        SwitchListTile(
+          title: const Text('Gateway Errors'),
+          subtitle: const Text('Notify when gateway encounters an error'),
+          value: NotificationService.errorNotifications,
+          onChanged: (value) => NotificationService.setErrorNotifications(value),
+        ),
+        SwitchListTile(
+          title: const Text('Node Events'),
+          subtitle: const Text('Notify when nodes pair or disconnect'),
+          value: NotificationService.nodeNotifications,
+          onChanged: (value) => NotificationService.setNodeNotifications(value),
+        ),
+      ],
+    );
+  }
+
+  String _themeModeLabel(AppThemeMode mode) {
+    switch (mode) {
+      case AppThemeMode.system:
+        return 'System Default';
+      case AppThemeMode.light:
+        return 'Light';
+      case AppThemeMode.dark:
+        return 'Dark';
+    }
+  }
+
+  void _showThemeModeDialog(ThemeService themeService) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Theme Mode'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: AppThemeMode.values.map((mode) {
+            return RadioListTile<AppThemeMode>(
+              title: Text(_themeModeLabel(mode)),
+              value: mode,
+              groupValue: themeService.themeMode,
+              onChanged: (value) {
+                if (value != null) {
+                  themeService.setThemeMode(value);
+                  Navigator.pop(ctx);
+                }
+              },
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  void _showAccentColorDialog(ThemeService themeService) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Accent Color'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: AppConstants.accentColors.length,
+            itemBuilder: (_, index) {
+              final color = AppConstants.accentColors[index];
+              final name = AppConstants.accentColorNames[index];
+              final selected = color == themeService.accentColor;
+              return ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: color,
+                  child: selected ? const Icon(Icons.check, color: Colors.white) : null,
+                ),
+                title: Text(name),
+                trailing: selected ? const Icon(Icons.check, color: Colors.green) : null,
+                onTap: () {
+                  themeService.setAccentColor(color);
+                  Navigator.pop(ctx);
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showFontSizeDialog(ThemeService themeService) {
+    double tempSize = themeService.terminalFontSize;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Terminal Font Size'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('${tempSize.toStringAsFixed(1)} pt', style: Theme.of(ctx).textTheme.headlineSmall),
+              Slider(
+                value: tempSize,
+                min: AppConstants.terminalFontSizeMin,
+                max: AppConstants.terminalFontSizeMax,
+                divisions: ((AppConstants.terminalFontSizeMax - AppConstants.terminalFontSizeMin) / 0.5).round(),
+                label: '${tempSize.toStringAsFixed(1)} pt',
+                onChanged: (value) => setState(() => tempSize = value),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                themeService.setTerminalFontSize(tempSize);
+                Navigator.pop(ctx);
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<String> _getSnapshotPath() async {
     final hasPermission = await NativeBridge.hasStoragePermission();
     if (hasPermission) {
@@ -346,7 +645,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       return '$sdcard/Download/openclaw-snapshot.json';
     }
-    // Fallback to app-private directory
     final dir = await getApplicationDocumentsDirectory();
     return '${dir.path}/openclaw-snapshot.json';
   }
@@ -399,13 +697,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final content = await file.readAsString();
       final snapshot = jsonDecode(content) as Map<String, dynamic>;
 
-      // Restore openclaw.json into rootfs
       final openclawConfig = snapshot['openclawConfig'] as String?;
       if (openclawConfig != null) {
         await NativeBridge.writeRootfsFile('root/.openclaw/openclaw.json', openclawConfig);
       }
 
-      // Restore preferences
       if (snapshot['dashboardUrl'] != null) {
         _prefs.dashboardUrl = snapshot['dashboardUrl'] as String;
       }
@@ -428,7 +724,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _prefs.nodeGatewayToken = snapshot['nodeGatewayToken'] as String;
       }
 
-      // Refresh UI
       await _loadSettings();
 
       if (!mounted) return;
