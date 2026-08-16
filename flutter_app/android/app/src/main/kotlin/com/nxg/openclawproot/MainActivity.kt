@@ -36,8 +36,8 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.nxg.openclawproot/native"
-    private val EVENT_CHANNEL = "com.nxg.openclawproot/gateway_logs"
+    private val CHANNEL = "com.nxg.openclawproot/channel"
+    private val EVENT_CHANNEL = "com.nxg.openclawproot/events"
 
     private lateinit var bootstrapManager: BootstrapManager
     private lateinit var processManager: ProcessManager
